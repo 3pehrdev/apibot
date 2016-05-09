@@ -8,71 +8,50 @@ feedparser = require "feedparser"
 json = (loadfile "./libs/JSON.lua")()
 mimetype = (loadfile "./libs/mimetype.lua")()
 redis = (loadfile "./libs/redis.lua")()
+JSON = (loadfile "./libs/dkjson.lua")()
 
 http.TIMEOUT = 10
-tgclie = './tg/bin/telegram-cli -c ./data/tg-cli.config -p default -De %q'
+
 
 function get_receiver(msg)
-  if msg.to.peer_type == 'user' then
-    return 'user#id'..msg.from.peer_id
+  if msg.to.type == 'user' then
+    return 'user#id'..msg.from.id
   end
-  if msg.to.peer_type == 'chat' then
-    return 'chat#id'..msg.to.peer_id
+  if msg.to.type == 'chat' then
+    return 'chat#id'..msg.to.id
   end
-  if msg.to.peer_type == 'encr_chat' then
+  if msg.to.type == 'encr_chat' then
     return msg.to.print_name
   end
-  if msg.to.peer_type == 'channel' then
-    return 'channel#id'..msg.to.peer_id
-  end
 end
 
-function get_receiver_api(msg)
-  if msg.to.peer_type == 'user' then
-    return msg.from.peer_id
-  end
-  if msg.to.peer_type == 'chat' then
-    return '-'..msg.to.peer_id
-  end
---TODO testing needed
--- if msg.to.peer_type == 'encr_chat' then
---   return msg.to.print_name
--- end
-  if msg.to.peer_type == 'channel' then
-    return '-100'..msg.to.peer_id
-  end
-end
-
-function is_chat_msg(msg)
-  if msg.to.peer_type == 'chat' or msg.to.peer_type == 'channel' then
+function is_chat_msg( msg )
+  if msg.to.type == 'chat' then
     return true
-  else
-    return false
   end
-end
-
-function is_realm(msg)
-  if msg.to.peer_id == _config.realm.gid then
-    return true
-  else
-    return false
-  end
+  return false
 end
 
 function string.random(length)
-  local str = '';
-  for i = 1, length do
-    math.random(97, 122)
-    str = str..string.char(math.random(97, 122));
-  end
-  return str;
+   local str = "";
+   for i = 1, length do
+      math.random(97, 122)
+      str = str..string.char(math.random(97, 122));
+   end
+   return str;
 end
 
 function string:split(sep)
-  local sep, fields = sep or ':', {}
+  local sep, fields = sep or ":", {}
   local pattern = string.format("([^%s]+)", sep)
   self:gsub(pattern, function(c) fields[#fields+1] = c end)
   return fields
+end
+
+-- DEPRECATED
+function string.trim(s)
+  print("string.trim(s) is DEPRECATED use string:trim() instead")
+  return s:gsub("^%s*(.-)%s*$", "%1")
 end
 
 -- Removes spaces
@@ -88,17 +67,17 @@ function get_http_file_name(url, headers)
   -- Random name, hope content-type works
   file_name = file_name or str:random(5)
 
-  local content_type = headers['content-type']
+  local content_type = headers["content-type"]
 
   local extension = nil
   if content_type then
     extension = mimetype.get_mime_extension(content_type)
   end
   if extension then
-    file_name = file_name..'.'..extension
+    file_name = file_name.."."..extension
   end
 
-  local disposition = headers['content-disposition']
+  local disposition = headers["content-disposition"]
   if disposition then
     -- attachment; filename=CodeCogsEqn.png
     file_name = disposition:match('filename=([^;]+)') or file_name
@@ -107,11 +86,11 @@ function get_http_file_name(url, headers)
   return file_name
 end
 
--- Saves file to /tmp/.
--- If file_name isn't provided, will get the text after the last "/" for
--- filename and content-type for extension
+--  Saves file to /tmp/. If file_name isn't provided,
+-- will get the text after the last "/" for filename
+-- and content-type for extension
 function download_to_file(url, file_name)
-  print('url to download: '..url)
+  print("url to download: "..url)
 
   local respbody = {}
   local options = {
@@ -138,8 +117,8 @@ function download_to_file(url, file_name)
 
   file_name = file_name or get_http_file_name(url, headers)
 
-  local file_path = '/tmp/'..file_name
-  print('Saved to: '..file_path)
+  local file_path = "/tmp/"..file_name
+  print("Saved to: "..file_path)
 
   file = io.open(file_path, "w+")
   file:write(table.concat(respbody))
@@ -152,7 +131,7 @@ function vardump(value)
   print(serpent.block(value, {comment=false}))
 end
 
--- http://stackoverflow.com/a/11130774/3163199
+-- taken from http://stackoverflow.com/a/11130774/3163199
 function scandir(directory)
   local i, t, popen = 0, {}, io.popen
   for filename in popen('ls -a "'..directory..'"'):lines() do
@@ -171,63 +150,13 @@ function run_command(str)
 end
 
 -- User has privileges
-function is_sudo(user_id)
+function is_sudo(msg)
   local var = false
-  if _config.sudo_users[user_id] then
-    var = true
-  end
-  return var
-end
-
--- User is a global administrator
-function is_admin(user_id)
-  local var = false
-  if _config.administrators[user_id] then
-    var = true
-  end
-  if _config.sudo_users[user_id] then
-    var = true
-  end
-  return var
-end
-
--- User is a group owner
-function is_owner(msg, chat_id, user_id)
-  local var = false
-  local data = load_data(_config.administration[chat_id])
-  if data.owners == nil then
-    var = false
-  elseif data.owners[user_id] then
-    var = true
-  end
-  if _config.administrators[user_id] then
-    var = true
-  end
-  if _config.sudo_users[user_id] then
-    var = true
-  end
-  return var
-end
-
--- User is a group moderator
-function is_mod(msg, chat_id, user_id)
-  local var = false
-  local data = load_data(_config.administration[chat_id])
-  if data.moderators == nil then
-    var = false
-  elseif data.moderators[user_id] then
-    var = true
-  end
-  if data.owners == nil then
-    var = false
-  elseif data.owners[user_id] then
-    var = true
-  end
-  if _config.administrators[user_id] then
-    var = true
-  end
-  if _config.sudo_users[user_id] then
-    var = true
+  -- Check users id in config
+  for v,user in pairs(_config.sudo_users) do
+    if user == msg.from.id then
+      var = true
+    end
   end
   return var
 end
@@ -236,15 +165,15 @@ end
 function get_name(msg)
   local name = msg.from.first_name
   if name == nil then
-    name = msg.from.peer_id
+    name = msg.from.id
   end
   return name
 end
 
 -- Returns at table of lua files inside plugins
-function plugins_names()
+function plugins_names( )
   local files = {}
-  for k, v in pairs(scandir('plugins')) do
+  for k, v in pairs(scandir("plugins")) do
     -- Ends with .lua
     if (v:match(".lua$")) then
       table.insert(files, v)
@@ -255,7 +184,7 @@ end
 
 -- Function name explains what it does.
 function file_exists(name)
-  local f = io.open(name,'r')
+  local f = io.open(name,"r")
   if f ~= nil then
     io.close(f)
     return true
@@ -271,9 +200,9 @@ function serialize_to_file(data, file, uglify)
   local serialized
   if not uglify then
     serialized = serpent.block(data, {
-      comment = false,
-      name = '_'
-    })
+        comment = false,
+        name = '_'
+      })
   else
     serialized = serpent.dump(data)
   end
@@ -292,9 +221,15 @@ function string:isblank()
   return self:isempty()
 end
 
+-- DEPRECATED!!!!!
+function string.starts(String, Start)
+  print("string.starts(String, Start) is DEPRECATED use string:starts(text) instead")
+  return Start == string.sub(String,1,string.len(Start))
+end
+
 -- Returns true if String starts with Start
 function string:starts(text)
-  return text == self:sub(1, string.len(text))
+  return text == string.sub(self,1,string.len(text))
 end
 
 -- Send image to user and delete it when finished.
@@ -321,7 +256,7 @@ function send_photo_from_url(receiver, url, cb_function, cb_extra)
     local text = 'Error downloading the image'
     send_msg(receiver, text, cb_function, cb_extra)
   else
-    print('File path: '..file_path)
+    print("File path: "..file_path)
     _send_photo(receiver, file_path, cb_function, cb_extra)
   end
 end
@@ -336,12 +271,12 @@ function send_photo_from_url_callback(cb_extra, success, result)
     local text = 'Error downloading the image'
     send_msg(receiver, text, ok_cb, false)
   else
-    print('File path: '..file_path)
+    print("File path: "..file_path)
     _send_photo(receiver, file_path, ok_cb, false)
   end
 end
 
--- Send multiple images asynchronous.
+--  Send multiple images asynchronous.
 -- param urls must be a table.
 function send_photos_from_url(receiver, urls)
   local cb_extra = {
@@ -363,7 +298,7 @@ function send_photos_from_url_callback(cb_extra, success, result)
   -- The previously image to remove
   if remove_path ~= nil then
     os.remove(remove_path)
-    print('Deleted: '..remove_path)
+    print("Deleted: "..remove_path)
   end
 
   -- Nil or empty, exit case (no more urls)
@@ -393,7 +328,7 @@ function rmtmp_cb(cb_extra, success, result)
 
   if file_path ~= nil then
     os.remove(file_path)
-    print('Deleted: '..file_path)
+    print("Deleted: "..file_path)
   end
   -- Finally call the callback
   cb_function(cb_extra, success, result)
@@ -415,7 +350,7 @@ end
 -- cb_function and cb_extra are optionals callback
 function send_document_from_url(receiver, url, cb_function, cb_extra)
   local file_path = download_to_file(url, false)
-  print('File path: '..file_path)
+  print("File path: "..file_path)
   _send_document(receiver, file_path, cb_function, cb_extra)
 end
 
@@ -429,9 +364,9 @@ function format_http_params(params, is_get)
     if v then -- nil value
       if first then
         first = false
-        str = str..k..'='..v
+        str = str..k.. "="..v
       else
-        str = str..'&'..k..'='..v
+        str = str.."&"..k.. "="..v
       end
     end
   end
@@ -453,17 +388,7 @@ end
 
 -- Check if user can use the plugin
 function user_allowed(plugin, msg)
-  if plugin.moderated and not is_mod(msg, msg.to.peer_id, msg.from.peer_id) then
-    if plugin.moderated and not is_owner(msg, msg.to.peer_id, msg.from.peer_id) then
-      if plugin.moderated and not is_admin(msg.from.peer_id) then
-        if plugin.moderated and not is_sudo(msg.from.peer_id) then
-          return false
-        end
-      end
-    end
-  end
-  -- If plugins privileged = true
-  if plugin.privileged and not is_sudo(msg.from.peer_id) then
+  if plugin.privileged and not is_sudo(msg) then
     return false
   end
   return true
@@ -471,52 +396,52 @@ end
 
 
 function send_order_msg(destination, msgs)
-  local cb_extra = {
-    destination = destination,
-    msgs = msgs
-  }
-  send_order_msg_callback(cb_extra, true)
+   local cb_extra = {
+      destination = destination,
+      msgs = msgs
+   }
+   send_order_msg_callback(cb_extra, true)
 end
 
 function send_order_msg_callback(cb_extra, success, result)
-  local destination = cb_extra.destination
-  local msgs = cb_extra.msgs
-  local file_path = cb_extra.file_path
-  if file_path ~= nil then
-    os.remove(file_path)
-    print('Deleted: '..file_path)
-  end
-  if type(msgs) == 'string' then
-    send_large_msg(destination, msgs)
-  elseif type(msgs) ~= 'table' then
-    return
-  end
-  if #msgs < 1 then
-    return
-  end
-  local msg = table.remove(msgs, 1)
-  local new_cb_extra = {
-    destination = destination,
-    msgs = msgs
-  }
-  if type(msg) == 'string' then
-    send_msg(destination, msg, send_order_msg_callback, new_cb_extra)
-  elseif type(msg) == 'table' then
-    local typ = msg[1]
-    local nmsg = msg[2]
-    new_cb_extra.file_path = nmsg
-    if typ == 'document' then
-      send_document(destination, nmsg, send_order_msg_callback, new_cb_extra)
-    elseif typ == 'image' or typ == 'photo' then
-      send_photo(destination, nmsg, send_order_msg_callback, new_cb_extra)
-    elseif typ == 'audio' then
-      send_audio(destination, nmsg, send_order_msg_callback, new_cb_extra)
-    elseif typ == 'video' then
-      send_video(destination, nmsg, send_order_msg_callback, new_cb_extra)
-    else
-      send_file(destination, nmsg, send_order_msg_callback, new_cb_extra)
-    end
-  end
+   local destination = cb_extra.destination
+   local msgs = cb_extra.msgs
+   local file_path = cb_extra.file_path
+   if file_path ~= nil then
+      os.remove(file_path)
+      print("Deleted: " .. file_path)
+   end
+   if type(msgs) == 'string' then
+      send_large_msg(destination, msgs)
+   elseif type(msgs) ~= 'table' then
+      return
+   end
+   if #msgs < 1 then
+      return
+   end
+   local msg = table.remove(msgs, 1)
+   local new_cb_extra = {
+      destination = destination,
+      msgs = msgs
+   }
+   if type(msg) == 'string' then
+      send_msg(destination, msg, send_order_msg_callback, new_cb_extra)
+   elseif type(msg) == 'table' then
+      local typ = msg[1]
+      local nmsg = msg[2]
+      new_cb_extra.file_path = nmsg
+      if typ == 'document' then
+         send_document(destination, nmsg, send_order_msg_callback, new_cb_extra)
+      elseif typ == 'image' or typ == 'photo' then
+         send_photo(destination, nmsg, send_order_msg_callback, new_cb_extra)
+      elseif typ == 'audio' then
+         send_audio(destination, nmsg, send_order_msg_callback, new_cb_extra)
+      elseif typ == 'video' then
+         send_video(destination, nmsg, send_order_msg_callback, new_cb_extra)
+      else
+         send_file(destination, nmsg, send_order_msg_callback, new_cb_extra)
+      end
+   end
 end
 
 -- Same as send_large_msg_callback but friendly params
@@ -542,8 +467,8 @@ function send_large_msg_callback(cb_extra, success, result)
     send_msg(destination, text, ok_cb, false)
   else
 
-    local my_text = text:sub(1, 4096)
-    local rest = text:sub(4096, text_len)
+    local my_text = string.sub(text, 1, 4096)
+    local rest = string.sub(text, 4096, text_len)
 
     local cb_extra = {
       destination = destination,
@@ -572,7 +497,7 @@ end
 
 -- Function to read data from files
 function load_from_file(file, default_data)
-  local f = io.open(file, 'r+')
+  local f = io.open(file, "r+")
   -- If file doesn't exists
   if f == nil then
     -- Create a new empty table
@@ -581,21 +506,21 @@ function load_from_file(file, default_data)
     print ('Created file', file)
   else
     print ('Data loaded from file', file)
-    f:close()
+    f:close() 
   end
   return loadfile (file)()
 end
 
 -- See http://stackoverflow.com/a/14899740
 function unescape_html(str)
-  local map = {
-    ["lt"]  = "<",
+  local map = { 
+    ["lt"]  = "<", 
     ["gt"]  = ">",
     ["amp"] = "&",
     ["quot"] = '"',
-    ["apos"] = "'"
+    ["apos"] = "'" 
   }
-  new = str:gsub('(&(#?x?)([%d%a]+);)', function(orig, n, s)
+  new = string.gsub(str, '(&(#?x?)([%d%a]+);)', function(orig, n, s)
     var = map[s] or n == "#" and string.char(s)
     var = var or n == "#x" and string.char(tonumber(s,16))
     var = var or orig
@@ -604,71 +529,431 @@ function unescape_html(str)
   return new
 end
 
-function pairsByKeys(t, f)
-  local a = {}
-  for n in pairs(t) do
-    a[#a+1] = n
+
+
+--Check if this chat is realm or not
+function is_realm(msg)
+  local var = false
+  local realms = 'realms'
+  local data = load_data(_config.moderation.data)
+  local chat = msg.to.id
+  if data[tostring(realms)] then
+    if data[tostring(realms)][tostring(msg.to.id)] then
+       var = true
+       end
+       return var
   end
-  table.sort(a, f)
-  local i = 0      -- iterator variable
-  local iter = function ()   -- iterator function
-    i = i + 1
-    if a[i] == nil then
-      return nil
-    else
-      return a[i], t[a[i]]
-    end
+end
+--Check if this chat is a group or not
+function is_group(msg)
+  local var = false
+  local groups = 'groups'
+  local data = load_data(_config.moderation.data)
+  local chat = msg.to.id
+  if data[tostring(groups)] then
+    if data[tostring(groups)][tostring(msg.to.id)] then
+       var = true
+       end
+       return var
   end
-  return iter
 end
 
--- Gets coordinates for a location.
-function get_coords(msg, input)
-  local url = 'https://maps.googleapis.com/maps/api/geocode/json?address='..URL.escape(input)
 
-  local jstr, res = http.request(url)
-  if res ~= 200 then
-    reply_msg(msg.id, 'Connection error.', ok_cb, true)
-    return
-  end
+function savelog(group, logtxt)
 
-  local jdat = json:decode(jstr)
-  if jdat.status == 'ZERO_RESULTS' then
-    reply_msg(msg.id, 'ZERO_RESULTS', ok_cb, true)
-    return
-  end
+local text = (os.date("[ %c ]=>  "..logtxt.."\n \n"))
+local file = io.open("./groups/logs/"..group.."log.txt", "a")
 
-  return {
-    lat = jdat.results[1].geometry.location.lat,
-    lon = jdat.results[1].geometry.location.lng,
-    formatted_address = jdat.results[1].formatted_address
-  }
+file:write(text)
+
+file:close()
+
 end
 
--- Text formatting is server side. And (until now) only for API bots.
--- So, here is a simple workaround; send message through Telegram official API.
--- You need to provide your API bots TOKEN in config.lua.
-function send_api_msg(msg, receiver, text, disable_web_page_preview, markdown)
-  local web_preview = '&disable_web_page_preview='..(tostring(disable_web_page_preview) or '')
-  local markdown = '&parse_mode='..(markdown or '')
-  local url = 'https://api.telegram.org/bot'.._config.bot_api.key..'/sendMessage'
-  local response = {}
+function user_print_name(user)
+   if user.print_name then
+      return user.print_name
+   end
+   local text = ''
+   if user.first_name then
+      text = user.last_name..' '
+   end
+   if user.lastname then
+      text = text..user.last_name
+   end
+   return text
+end
 
-  local res, code = https.request{
-    url = url..'?chat_id='..receiver..markdown..web_preview..'&text='..URL.escape(text),
-    method = "POST",
-    sink = ltn12.sink.table(response),
-  }
-
-  if code == 400 then
-    local taberr = table.concat(response)
-    local jerr = json:decode(taberr)
-    if jerr.description:match('chat not found') then
-      reply_msg(msg.id, 'Please start or message @'.._config.bot_api.uname
-          ..' privately first, then repeat the request.', ok_cb, true)
-    else
-      reply_msg(msg.id, jerr.description, ok_cb, true)
+--Check if user is the owner of that group or not
+function is_owner(msg)
+  local var = false
+  local data = load_data(_config.moderation.data)
+  local user = msg.from.id
+  
+  if data[tostring(msg.to.id)] then
+    if data[tostring(msg.to.id)]['set_owner'] then
+      if data[tostring(msg.to.id)]['set_owner'] == tostring(user) then
+        var = true
+      end
     end
+  end
+
+  if data['admins'] then
+    if data['admins'][tostring(user)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == msg.from.id then
+        var = true
+    end
+  end
+  return var
+end
+
+function is_owner2(user_id, group_id)
+  local var = false
+  local data = load_data(_config.moderation.data)
+
+  if data[tostring(group_id)] then
+    if data[tostring(group_id)]['set_owner'] then
+      if data[tostring(group_id)]['set_owner'] == tostring(user_id) then
+        var = true
+      end
+    end
+  end
+  
+  if data['admins'] then
+    if data['admins'][tostring(user_id)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == user_id then
+        var = true
+    end
+  end
+  return var
+end
+
+--Check if user is admin or not
+function is_admin(msg)
+  local var = false
+  local data = load_data(_config.moderation.data)
+  local user = msg.from.id
+  local admins = 'admins'
+  if data[tostring(admins)] then
+    if data[tostring(admins)][tostring(user)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == msg.from.id then
+        var = true
+    end
+  end
+  return var
+end
+
+function is_admin2(user_id)
+  local var = false
+  local data = load_data(_config.moderation.data)
+  local user = user_id
+  local admins = 'admins'
+  if data[tostring(admins)] then
+    if data[tostring(admins)][tostring(user)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == user_id then
+        var = true
+    end
+  end
+  return var
+end
+
+
+
+--Check if user is the mod of that group or not
+function is_momod(msg)
+  local var = false
+  local data = load_data(_config.moderation.data)
+  local user = msg.from.id
+  if data[tostring(msg.to.id)] then
+    if data[tostring(msg.to.id)]['moderators'] then
+      if data[tostring(msg.to.id)]['moderators'][tostring(user)] then
+        var = true
+      end
+    end
+  end
+
+  if data[tostring(msg.to.id)] then
+    if data[tostring(msg.to.id)]['set_owner'] then
+      if data[tostring(msg.to.id)]['set_owner'] == tostring(user) then
+        var = true
+      end
+    end
+  end
+
+  if data['admins'] then
+    if data['admins'][tostring(user)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == msg.from.id then
+        var = true
+    end
+  end
+  return var
+end
+
+function is_momod2(user_id, group_id)
+  local var = false
+  local data = load_data(_config.moderation.data)
+  local usert = user_id
+  if data[tostring(group_id)] then
+    if data[tostring(group_id)]['moderators'] then
+      if data[tostring(group_id)]['moderators'][tostring(usert)] then
+        var = true
+      end
+    end
+  end
+
+  if data[tostring(group_id)] then
+    if data[tostring(group_id)]['set_owner'] then
+      if data[tostring(group_id)]['set_owner'] == tostring(user_id) then
+        var = true
+      end
+    end
+  end
+  
+  if data['admins'] then
+    if data['admins'][tostring(user_id)] then
+      var = true
+    end
+  end
+  for v,user in pairs(_config.sudo_users) do
+    if user == usert then
+        var = true
+    end
+  end
+  return var
+end
+
+-- Returns the name of the sender
+function kick_user(user_id, chat_id) 
+  if tonumber(user_id) == tonumber(our_id) then -- Ignore bot
+    return
+  end
+  if is_owner2(user_id, chat_id) then -- Ignore admins
+    return
+  end
+  local chat = 'chat#id'..chat_id
+  local user = 'user#id'..user_id
+  chat_del_user(chat, user, ok_cb, true)
+end
+
+-- Ban
+function ban_user(user_id, chat_id)
+  if tonumber(user_id) == tonumber(our_id) then -- Ignore bot
+    return
+  end
+  if is_admin2(user_id) then -- Ignore admins
+    return
+  end
+  -- Save to redis
+  local hash =  'banned:'..chat_id
+  redis:sadd(hash, user_id)
+  -- Kick from chat
+  kick_user(user_id, chat_id)
+end
+-- Global ban
+function banall_user(user_id)  
+  if tonumber(user_id) == tonumber(our_id) then -- Ignore bot
+    return
+  end
+  if is_admin2(user_id) then -- Ignore admins
+    return
+  end
+  -- Save to redis
+  local hash =  'gbanned'
+  redis:sadd(hash, user_id)
+end
+-- Global unban
+function unbanall_user(user_id)
+  --Save on redis  
+  local hash =  'gbanned'
+  redis:srem(hash, user_id)
+end
+
+-- Check if user_id is banned in chat_id or not
+function is_banned(user_id, chat_id)
+  --Save on redis  
+  local hash =  'banned:'..chat_id
+  local banned = redis:sismember(hash, user_id)
+  return banned or false
+end
+
+-- Check if user_id is globally banned or not
+function is_gbanned(user_id)
+  --Save on redis
+  local hash =  'gbanned'
+  local banned = redis:sismember(hash, user_id)
+  return banned or false
+end
+
+-- Returns chat_id ban list
+function ban_list(chat_id)
+  local hash =  'banned:'..chat_id
+  local list = redis:smembers(hash)
+  local text = "Ban list !\n\n"
+  for k,v in pairs(list) do
+ 		local user_info = redis:hgetall('user:'..v)
+-- 		vardump(user_info)
+		if user_info then
+		  if user_info.username then
+		    user = '@'..user_info.username
+	    elseif user_info.print_name and not user_info.username then
+	      user = string.gsub(user_info.print_name, "_", " ")
+  	  else 
+        user = ''
+      end
+      text = text..k.." - "..user.." ["..v.."]\n"
+		end
+	end
+ return text
+end
+
+-- Returns globally ban list
+function banall_list() 
+  local hash =  'gbanned'
+  local list = redis:smembers(hash)
+  local text = "global bans !\n\n"
+  for k,v in pairs(list) do
+ 		local user_info = redis:hgetall('user:'..v)
+-- 		vardump(user_info)
+		if user_info then
+		  if user_info.username then
+		    user = '@'..user_info.username
+	    elseif user_info.print_name and not user_info.username then
+	      user = string.gsub(user_info.print_name, "_", " ")
+  	  else 
+        user = ''
+      end
+      text = text..k.." - "..user.." ["..v.."]\n"
+		end
+	end
+ return text
+end
+
+-- /id by reply
+function get_message_callback_id(extra, success, result)
+    if result.to.type == 'chat' then
+        local chat = 'chat#id'..result.to.id
+        send_large_msg(chat, result.from.id)
+    else
+        return 'Use This in Your Groups'
+    end
+end
+
+-- kick by reply for mods and owner
+function Kick_by_reply(extra, success, result)
+  if result.to.type == 'chat' then
+    local chat = 'chat#id'..result.to.id
+    if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't kick myself"
+    end
+    if is_momod2(result.from.id, result.to.id) then -- Ignore mods,owner,admin
+      return "you can't kick mods,owner and admins"
+    end
+    chat_del_user(chat, 'user#id'..result.from.id, ok_cb, false)
+  else
+    return 'Use This in Your Groups'
+  end
+end
+
+-- Kick by reply for admins
+function Kick_by_reply_admins(extra, success, result)
+  if result.to.type == 'chat' then
+    local chat = 'chat#id'..result.to.id
+    if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't kick myself"
+    end
+    if is_admin2(result.from.id) then -- Ignore admins
+      return
+    end
+    chat_del_user(chat, 'user#id'..result.from.id, ok_cb, false)
+  else
+    return 'Use This in Your Groups'
+  end
+end
+
+--Ban by reply for admins
+function ban_by_reply(extra, success, result)
+  if result.to.type == 'chat' then
+  local chat = 'chat#id'..result.to.id
+  if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't ban myself"
+  end
+  if is_momod2(result.from.id, result.to.id) then -- Ignore mods,owner,admin
+    return "you can't kick mods,owner and admins"
+  end
+  ban_user(result.from.id, result.to.id)
+  send_large_msg(chat, "User "..result.from.id.." Banned")
+  else
+    return 'Use This in Your Groups'
+  end
+end
+
+-- Ban by reply for admins
+function ban_by_reply_admins(extra, success, result)
+  if result.to.type == 'chat' then
+    local chat = 'chat#id'..result.to.id
+    if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't ban myself"
+    end
+    if is_admin2(result.from.id) then -- Ignore admins
+      return
+    end
+    ban_user(result.from.id, result.to.id)
+    send_large_msg(chat, "User "..result.from.id.." Banned")
+  else
+    return 'Use This in Your Groups'
+  end
+end
+
+-- Unban by reply
+function unban_by_reply(extra, success, result) 
+  if result.to.type == 'chat' then
+    local chat = 'chat#id'..result.to.id
+    if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't unban myself"
+    end
+    send_large_msg(chat, "User "..result.from.id.." Unbanned")
+    -- Save on redis
+    local hash =  'banned:'..result.to.id
+    redis:srem(hash, result.from.id)
+  else
+    return 'Use This in Your Groups'
+  end
+end
+function banall_by_reply(extra, success, result)
+  if result.to.type == 'chat' then
+    local chat = 'chat#id'..result.to.id
+    if tonumber(result.from.id) == tonumber(our_id) then -- Ignore bot
+      return "I won't banall myself"
+    end
+    if is_admin2(result.from.id) then -- Ignore admins
+      return 
+    end
+    local name = user_print_name(result.from)
+    banall_user(result.from.id)
+    chat_del_user(chat, 'user#id'..result.from.id, ok_cb, false)
+    send_large_msg(chat, "User "..name.."["..result.from.id.."] hammered")
+  else
+    return 'Use This in Your Groups'
   end
 end
 
@@ -686,7 +971,7 @@ end
 function send_api_msg(msg, receiver, text, disable_web_page_preview, markdown)
   
   
-  local api_key ='230857953:AAEzfWurHo9Mlm3BxWgKcXliOy93X__x48I'
+  local api_key =''
   
   
   local url_api = 'https://api.telegram.org/bot'..api_key
