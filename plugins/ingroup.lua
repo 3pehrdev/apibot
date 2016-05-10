@@ -1073,7 +1073,9 @@ local function run(msg, matches)
         return "Create a link using /newlink first !"
       end
        savelog(msg.to.id, name_log.." ["..msg.from.id.."] requested group link ["..group_link.."]")
-      return "Group link:\n"..group_link
+      local text = "[Group link]("..group_link..")"
+      send_api_msg(msg, get_receiver_api(msg), text, true, 'md')
+
     end
     if matches[1] == 'setowner' and matches[2] then
       if not is_owner(msg) then
@@ -1263,5 +1265,4 @@ return {
   run = run
 }
 end
-
 
