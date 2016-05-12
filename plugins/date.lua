@@ -1,6 +1,6 @@
 function run(msg, matches)
 text = io.popen("cal"):read('*all')
-  return * text *
+  return "* text *"
 send_api_msg(msg, get_receiver_api(msg), text, true, 'md')
 end
 return {
